@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Kháng Chiến Làng Quê 3D: Trung Ý - Trung Thành - Trung Chính</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; user-select: none; }
+  canvas#view { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #hud { position: fixed; top: 12px; left: 12px; color: #fff; background: rgba(20,35,20,0.88); padding: 12px 16px; border-radius: 12px; font-size: 13px; line-height: 1.6; pointer-events: none; border: 1px solid rgba(250,204,21,0.45); z-index: 10; }
+  #skills { position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10; pointer-events: none; }
+  .sk { background: rgba(20,35,20,0.9); border: 2px solid #eab308; color: #fff; padding: 7px 12px; border-radius: 10px; text-align: center; font-size: 12px; min-width: 82px; }
+  .sk b { display: block; color: #facc15; font-size: 13px; }
+  #crosshair { position: fixed; top: 50%; left: 50%; width: 18px; height: 18px; transform: translate(-50%,-50%); pointer-events: none; z-index: 10; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #facc15; box-shadow: 0 0 6px #ef4444; }
+  #crosshair::before { top: 8px; left: 0; width: 18px; height: 2px; }
+  #crosshair::after { left: 8px; top: 0; width: 2px; height: 18px; }
+  #minimap { position: fixed; bottom: 15px; right: 15px; border: 2px solid #eab308; border-radius: 8px; background: rgba(15,25,15,0.88); z-index: 10; }
+  #winScreen { position: fixed; inset: 0; background: rgba(10,20,10,0.92); display: none; justify-content: center; align-items: center; flex-direction: column; color: #fff; z-index: 50; }
+  #winScreen button { margin-top: 15px; padding: 14px 36px; font-size: 17px; background: linear-gradient(135deg,#facc15,#f97316); border: none; border-radius: 30px; cursor: pointer; font-weight: bold; color: #111; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div style="color:#facc15;font-weight:bold;font-size:15px">🌾 KHÁNG CHIẾN LÀNG QUÊ: TRUNG Ý - TRUNG THÀNH - TRUNG CHÍNH</div>
+  <div>Chỉ Huy Bạn: <span id="pHp" style="color:#4ade80;font-weight:bold">600</span> HP | Quân Lương: <span id="gold" style="color:#facc15;font-weight:bold">0</span> 🌾</div>
+  <div>Đình Làng: 🔴<span id="bRed" style="color:#f87171;font-weight:bold">100%</span> | 🔵<span id="bBlue" style="color:#60a5fa;font-weight:bold">100%</span> | 🟢<span id="bGreen" style="color:#4ade80;font-weight:bold">100%</span></div>
+  <div style="font-size:11px;color:#d9f99d;margin-top:3px">[1] Rèn Kiếm (50🌾) | [2] Tăng Sức (50🌾) | [E] Hô hào dân quân theo sau</div>
+</div>
+<div id="skills">
+  <div class="sk"><b>Chuột Trái</b>Chém Cận Chiến</div>
+  <div class="sk"><b id="cdQ">[Q] Sẵn sàng</b>Xung Kích Kiếm</div>
+  <div class="sk"><b id="cdShift">[Shift] Sẵn sàng</b>Lướt Nhanh</div>
+  <div class="sk"><b id="cdF">[F] Sẵn sàng</b>Băng Bó Vết Thương</div>
+</div>
+<div id="crosshair"></div>
+<canvas id="minimap" width="192" height="160"></canvas>
+<div id="winScreen"><h1 id="winText"></h1><button onclick="location.reload()">TIẾP TỤC CHIẾN ĐẤU</button></div>
+<canvas id="view"></canvas>
+<script>
+const cvs = document.getElementById('view'), ctx = cvs.getContext('2d');
+const mCtx = document.getElementById('minimap').getContext('2d');
+function resize() { cvs.width = window.innerWidth; cvs.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
+
+const faces = { archer: new Image(), soldier: new Image(), general: new Image() };
+faces.archer.src = 'cungthu.jpg';
+faces.soldier.src = 'linh.jpg';
+faces.general.src = 'tuong.jpg';
+
+// Bản đồ Làng Quê 24x20 (1: Lũy tre làng, 5: Nhà tranh vách đất, 2: Đình Trung Ý, 3: Đình Trung Thành, 4: Đình Trung Chính)
+const RAW_MAP = [
+  "111111111111111111111111",
+  "100000000011000000000001",
+  "102000000000000000000301",
+  "100000000011000000000001",
+  "100055500011000055500001",
+  "100050000000000000500001",
+  "100000000000000000000001",
+  "100000011000001100000001",
+  "111000011000001100000111",
+  "100000000000000000000001",
+  "100000000000000000000001",
+  "100055000000000000550001",
+  "100055000011000000550001",
+  "100000000011000000000001",
+  "100000000000000000000001",
+  "100000555000005550000001",
+  "100000000000000000000001",
+  "100000000004000000000001",
+  "100000000000000000000001",
+  "111111111111111111111111"
+];
+const MAP = RAW_MAP.map(r => r.split('').map(Number));
+const MW = 24, MH = 20;
+const player = { x: 3.5, y: 2.5, dir: 0.4, hp: 600, maxHp: 600, dmg: 30, gold: 0, swing: 0, cd: 0, qCd: 0, sCd: 0, fCd: 0, healGlow: 0 };
+const bases = {
+  red:   { x: 2.5,  y: 2.5,  hp: 3000, max: 3000, cd: 0, color: '#ef4444' },
+  blue:  { x: 21.5, y: 2.5,  hp: 3000, max: 3000, cd: 0, color: '#3b82f6' },
+  green: { x: 11.5, y: 17.5, hp: 3000, max: 3000, cd: 0, color: '#22c55e' }
+};
+const entities = [], projectiles = [], particles = [], floatTexts = [];
+
+entities.push({ type: 'general', team: 'blue', mounted: true, x: 20.5, y: 3.5, hp: 850, maxHp: 850, cd: 0, skillCd: 3.5 });
+entities.push({ type: 'general', team: 'green', mounted: false, x: 11.5, y: 16.2, hp: 750, maxHp: 750, cd: 0, skillCd: 4.0 });
+
+function spawnUnit(team, role) {
+  if (entities.filter(e => e.team === team && e.type !== 'general').length >= 14) return;
+  const b = bases[team];
+  const sx = b.x + (team === 'red' ? 1.5 : team === 'blue' ? -1.5 : (Math.random() - 0.5) * 3);
+  const sy = b.y + (team === 'green' ? -1.5 : (Math.random() - 0.5) * 2.5);
+  if (!canMove(sx, sy)) return;
+  entities.push({
+    type: role, team, x: sx, y: sy,
+    hp: role === 'archer' ? 75 : 110, maxHp: role === 'archer' ? 75 : 110,
+    cd: 0, follow: false
+  });
+}
+['red', 'blue', 'green'].forEach(t => {
+  for (let i = 0; i < 4; i++) spawnUnit(t, 'soldier');
+  for (let i = 0; i < 2; i++) spawnUnit(t, 'archer');
+});
+
+function addFx(x, y, color, count = 7) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2.5;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, color, life: 0.35 });
+  }
+}
+function addDmgText(x, y, text, color) { floatTexts.push({ x, y, text, color, life: 0.75 }); }
+function canMove(nx, ny) {
+  const gx = Math.floor(nx), gy = Math.floor(ny);
+  return gy >= 0 && gy < MH && gx >= 0 && gx < MW && MAP[gy][gx] === 0;
+}
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') meleeAttack();
+  if (e.code === 'KeyQ') castWave();
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') castDash();
+  if (e.code === 'KeyF') castHeal();
+  if (e.code === 'KeyE') entities.forEach(en => { if (en.team === 'red') en.follow = !en.follow; });
+  if (e.code === 'Digit1' && player.gold >= 50) { player.gold -= 50; player.dmg += 12; addDmgText(player.x, player.y, "+12 Sức đánh!", "#facc15"); }
+  if (e.code === 'Digit2' && player.gold >= 50) { player.gold -= 50; player.maxHp += 120; player.hp += 120; addDmgText(player.x, player.y, "+120 Máu!", "#4ade80"); }
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+cvs.addEventListener('click', () => { if (document.pointerLockElement !== cvs) cvs.requestPointerLock(); meleeAttack(); });
+window.addEventListener('mousemove', e => { if (document.pointerLockElement === cvs) player.dir += e.movementX * 0.003; });
+
+function meleeAttack() {
+  if (player.cd > 0 || over) return;
+  player.swing = 1.0; player.cd = 0.38;
+  entities.forEach(e => {
+    if (e.team !== 'red') {
+      const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy);
+      const diff = Math.atan2(Math.sin(Math.atan2(dy, dx) - player.dir), Math.cos(Math.atan2(dy, dx) - player.dir));
+      if (d < 2.6 && Math.abs(diff) < 0.75) {
+        e.hp -= player.dmg;
+        addFx(e.x, e.y, '#f97316', 8);
+        addDmgText(e.x, e.y, `-${player.dmg}`, '#facc15');
+        if (e.hp <= 0) player.gold += (e.type === 'general' ? 250 : 15);
+      }
+    }
+  });
+  ['blue', 'green'].forEach(t => {
+    if (Math.hypot(bases[t].x - player.x, bases[t].y - player.y) < 3.0) {
+      bases[t].hp = Math.max(0, bases[t].hp - player.dmg);
+      addFx(bases[t].x, bases[t].y, '#ef4444', 8);
+      addDmgText(bases[t].x, bases[t].y, `-${player.dmg}`, '#f87171');
+    }
+  });
+}
+
+function castWave() {
+  if (player.qCd > 0 || over) return;
+  player.qCd = 4.0; player.swing = 1.0;
+  projectiles.push({ team: 'red', type: 'wave', x: player.x, y: player.y, vx: Math.cos(player.dir) * 11, vy: Math.sin(player.dir) * 11, dmg: Math.round(player.dmg * 1.5), life: 1.3 });
+}
+function castDash() {
+  if (player.sCd > 0 || over) return;
+  player.sCd = 3.0;
+  for (let i = 0; i < 6; i++) {
+    const nx = player.x + Math.cos(player.dir) * 0.45, ny = player.y + Math.sin(player.dir) * 0.45;
+    if (canMove(nx, ny)) { player.x = nx; player.y = ny; }
+  }
+  addFx(player.x, player.y, '#38bdf8', 10);
+}
+function castHeal() {
+  if (player.fCd > 0 || over) return;
+  player.fCd = 8.0; player.healGlow = 0.6;
+  player.hp = Math.min(player.maxHp, player.hp + 160);
+  addDmgText(player.x, player.y, "+160 HP", "#4ade80");
+}
+let spawnTimer = 0, over = false, last = performance.now();
+
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  const W = cvs.width, H = cvs.height;
+
+  if (!over) {
+    if (keys['ArrowLeft']) player.dir -= 2.3 * dt;
+    if (keys['ArrowRight']) player.dir += 2.3 * dt;
+    let mx = 0, my = 0, spd = 4.8 * dt;
+    if (keys['KeyW']) { mx += Math.cos(player.dir) * spd; my += Math.sin(player.dir) * spd; }
+    if (keys['KeyS']) { mx -= Math.cos(player.dir) * spd; my -= Math.sin(player.dir) * spd; }
+    if (keys['KeyA']) { mx += Math.sin(player.dir) * spd; my -= Math.cos(player.dir) * spd; }
+    if (keys['KeyD']) { mx -= Math.sin(player.dir) * spd; my += Math.cos(player.dir) * spd; }
+    if (canMove(player.x + mx, player.y)) player.x += mx;
+    if (canMove(player.x, player.y + my)) player.y += my;
+
+    player.cd = Math.max(0, player.cd - dt);
+    player.qCd = Math.max(0, player.qCd - dt);
+    player.sCd = Math.max(0, player.sCd - dt);
+    player.fCd = Math.max(0, player.fCd - dt);
+    player.swing = Math.max(0, player.swing - dt * 4);
+    player.healGlow = Math.max(0, player.healGlow - dt);
+
+    spawnTimer += dt;
+    if (spawnTimer >= 5.0) {
+      spawnTimer = 0;
+      ['red', 'blue', 'green'].forEach(t => {
+        if (bases[t].hp > 0) {
+          spawnUnit(t, 'soldier');
+          if (Math.random() < 0.5) spawnUnit(t, 'archer');
+        }
+      });
+    }
+
+    ['red', 'blue', 'green'].forEach(t => {
+      const b = bases[t];
+      if (b.hp <= 0) return;
+      b.cd = Math.max(0, b.cd - dt);
+      if (b.cd <= 0) {
+        let near = null, minD = 4.5;
+        entities.forEach(e => {
+          if (e.team !== t) {
+            const d = Math.hypot(e.x - b.x, e.y - b.y);
+            if (d < minD) { minD = d; near = e; }
+          }
+        });
+        if (t !== 'red' && Math.hypot(player.x - b.x, player.y - b.y) < minD) near = player;
+        if (near) {
+          b.cd = 1.4;
+          const a = Math.atan2(near.y - b.y, near.x - b.x);
+          projectiles.push({ team: t, type: 'tower', x: b.x + Math.cos(a) * 0.8, y: b.y + Math.sin(a) * 0.8, vx: Math.cos(a) * 9, vy: Math.sin(a) * 9, dmg: 18, life: 0.6 });
+        }
+      }
+    });
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i]; p.life -= dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (!canMove(p.x, p.y) || p.life <= 0) { projectiles.splice(i, 1); continue; }
+
+      if (p.team !== 'red' && Math.hypot(player.x - p.x, player.y - p.y) < 0.7) {
+        player.hp -= p.dmg; addFx(player.x, player.y, '#ef4444', 5);
+        if (p.type !== 'wave') p.life = 0;
+      }
+      entities.forEach(e => {
+        if (e.team !== p.team && Math.hypot(e.x - p.x, e.y - p.y) < 0.8) {
+          e.hp -= p.dmg; addFx(e.x, e.y, '#facc15', 5);
+          if (p.team === 'red') {
+            addDmgText(e.x, e.y, `-${p.dmg}`, '#fb923c');
+            if (e.hp <= 0) player.gold += (e.type === 'general' ? 250 : 15);
+          }
+          if (p.type !== 'wave') p.life = 0;
+        }
+      });
+    }
+
+    entities.forEach(e => {
+      e.cd = Math.max(0, e.cd - dt);
+      const enemyTeams = ['red', 'blue', 'green'].filter(t => t !== e.team && bases[t].hp > 0);
+      const targetBase = enemyTeams.length ? bases[enemyTeams[e.team === 'red' ? 0 : (e.type === 'general' ? 0 : enemyTeams.length - 1)]] : null;
+      let tx = targetBase ? targetBase.x : e.x, ty = targetBase ? targetBase.y : e.y;
+      if (e.team === 'red' && e.follow) { tx = player.x; ty = player.y; }
+
+      let target = null, minD = Infinity;
+      entities.forEach(o => {
+        if (o.team !== e.team) {
+          const d = Math.hypot(o.x - e.x, o.y - e.y);
+          if (d < minD) { minD = d; target = o; }
+        }
+      });
+      if (e.team !== 'red') {
+        const dp = Math.hypot(player.x - e.x, player.y - e.y);
+        if (dp < minD || (e.type === 'general' && dp < 9)) { minD = dp; target = player; }
+      }
+
+      if (e.type === 'general') {
+        e.skillCd = Math.max(0, e.skillCd - dt);
+        if (e.skillCd <= 0 && target && minD < 7.5) {
+          e.skillCd = 4.5;
+          const a = Math.atan2(target.y - e.y, target.x - e.x);
+          projectiles.push({ team: e.team, type: 'wave', x: e.x, y: e.y, vx: Math.cos(a) * 8.5, vy: Math.sin(a) * 8.5, dmg: 28, life: 1.0 });
+        }
+      }
+
+      const atkRange = e.type === 'archer' ? 5.5 : 1.5;
+      if (target && minD <= atkRange) {
+        if (e.cd <= 0) {
+          e.cd = e.type === 'general' ? 0.9 : 1.2;
+          if (e.type === 'archer') {
+            const a = Math.atan2(target.y - e.y, target.x - e.x);
+            projectiles.push({ team: e.team, type: 'arrow', x: e.x, y: e.y, vx: Math.cos(a) * 8, vy: Math.sin(a) * 8, dmg: 8, life: 0.9 });
+          } else {
+            target.hp -= (e.type === 'general' ? 18 : 7);
+            addFx(target.x, target.y, '#ef4444', 4);
+          }
+        }
+      } else if (targetBase && Math.hypot(tx - e.x, ty - e.y) < 1.9 && !e.follow) {
+        if (e.cd <= 0) { e.cd = 1.1; targetBase.hp = Math.max(0, targetBase.hp - (e.type === 'general' ? 22 : 10)); }
+      } else {
+        const gx = (target && minD < 6.5) ? target.x : tx;
+        const gy = (target && minD < 6.5) ? target.y : ty;
+        const ang = Math.atan2(gy - e.y, gx - e.x);
+        const moveSpd = (e.mounted ? 3.5 : e.type === 'general' ? 3.0 : 2.2) * dt;
+        const vx = Math.cos(ang) * moveSpd, vy = Math.sin(ang) * moveSpd;
+        if (canMove(e.x + vx, e.y)) e.x += vx;
+        if (canMove(e.x, e.y + vy)) e.y += vy;
+      }
+    });
+
+    for (let i = entities.length - 1; i >= 0; i--) if (entities[i].hp <= 0) entities.splice(i, 1);
+    for (let i = particles.length - 1; i >= 0; i--) { particles[i].x += particles[i].vx * dt; particles[i].y += particles[i].vy * dt; particles[i].life -= dt; if (particles[i].life <= 0) particles.splice(i, 1); }
+    for (let i = floatTexts.length - 1; i >= 0; i--) { floatTexts[i].life -= dt; if (floatTexts[i].life <= 0) floatTexts.splice(i, 1); }
+
+    document.getElementById('pHp').textContent = Math.max(0, Math.ceil(player.hp));
+    document.getElementById('gold').textContent = player.gold;
+    document.getElementById('bRed').textContent = Math.ceil((bases.red.hp / bases.red.max) * 100) + '%';
+    document.getElementById('bBlue').textContent = Math.ceil((bases.blue.hp / bases.blue.max) * 100) + '%';
+    document.getElementById('bGreen').textContent = Math.ceil((bases.green.hp / bases.green.max) * 100) + '%';
+    document.getElementById('cdQ').textContent = player.qCd > 0 ? player.qCd.toFixed(1) + 's' : '[Q] Sẵn sàng';
+    document.getElementById('cdShift').textContent = player.sCd > 0 ? player.sCd.toFixed(1) + 's' : '[Shift] Sẵn sàng';
+    document.getElementById('cdF').textContent = player.fCd > 0 ? player.fCd.toFixed(1) + 's' : '[F] Sẵn sàng';
+
+    if (player.hp <= 0 || bases.red.hp <= 0 || (bases.blue.hp <= 0 && bases.green.hp <= 0)) {
+      over = true; document.getElementById('winScreen').style.display = 'flex';
+      document.getElementById('winText').textContent = (bases.blue.hp <= 0 && bases.green.hp <= 0) ? '🏆 LÀNG TRUNG Ý GIÀNH THẮNG LỢI!' : '💀 BẠN ĐÃ THẤT BẠI!';
+    }
+  }
+  // Bầu trời chiều quê hương & Cánh đồng lúa/đường làng
+  const sky = ctx.createLinearGradient(0, 0, 0, H / 2);
+  sky.addColorStop(0, '#0284c7'); sky.addColorStop(0.65, '#7dd3fc'); sky.addColorStop(1, '#fde68a');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H / 2);
+  const groundGrad = ctx.createLinearGradient(0, H / 2, 0, H);
+  groundGrad.addColorStop(0, '#365314'); groundGrad.addColorStop(0.5, '#4d7c0f'); groundGrad.addColorStop(1, '#713f12');
+  ctx.fillStyle = groundGrad; ctx.fillRect(0, H / 2, W, H / 2);
+
+  // Raycasting Lũy tre xanh (1), Nhà tranh vách đất (5) & 3 Đình Làng (2, 3, 4)
+  const FOV = Math.PI / 3, zBuf = new Float32Array(W);
+  for (let x = 0; x < W; x += 2) {
+    const rayAng = (player.dir - FOV / 2) + (x / W) * FOV;
+    const rx = Math.cos(rayAng), ry = Math.sin(rayAng);
+    let dist = 0, hit = 0;
+    while (hit === 0 && dist < 26) {
+      dist += 0.05;
+      const tx = Math.floor(player.x + rx * dist), ty = Math.floor(player.y + ry * dist);
+      if (ty < 0 || ty >= MH || tx < 0 || tx >= MW) hit = 1;
+      else if (MAP[ty][tx] > 0) hit = MAP[ty][tx];
+    }
+    const perp = dist * Math.cos(rayAng - player.dir);
+    zBuf[x] = zBuf[x + 1] = perp;
+    const wallH = Math.min(H, H / perp);
+    const shade = Math.max(0.25, 1 - perp / 24);
+    const stalk = Math.sin((player.x + rx * dist + player.y + ry * dist) * 18) > 0 ? 1 : 0.78;
+    const topY = (H - wallH) / 2;
+
+    if (hit === 2) { ctx.fillStyle = `rgb(${220*shade},45,45)`; ctx.fillRect(x, topY, 2, wallH); }
+    else if (hit === 3) { ctx.fillStyle = `rgb(40,115,${240*shade})`; ctx.fillRect(x, topY, 2, wallH); }
+    else if (hit === 4) { ctx.fillStyle = `rgb(35,${200*shade},85)`; ctx.fillRect(x, topY, 2, wallH); }
+    else if (hit === 5) {
+      ctx.fillStyle = `rgb(${215*shade},${170*shade},${65*shade})`; ctx.fillRect(x, topY, 2, wallH * 0.38);
+      ctx.fillStyle = `rgb(${145*shade},${105*shade},${65*shade})`; ctx.fillRect(x, topY + wallH * 0.38, 2, wallH * 0.62);
+    } else {
+      ctx.fillStyle = `rgb(${45*shade*stalk},${135*shade*stalk},${40*shade*stalk})`;
+      ctx.fillRect(x, topY, 2, wallH);
+    }
+  }
+
+  // Hàm vẽ thân 3D (Vest/Đồng phục + Chiến mã) ghép với ảnh khuôn mặt thật
+  const animT = now * 0.008;
+  function drawRealFaceCharacter(s, sx, scale) {
+    const isGen = s.type === 'general';
+    const isBlue = s.team === 'blue';
+    const h = scale * (s.mounted ? 1.35 : isGen ? 1.08 : 0.8);
+    const w = h * 0.48;
+    const topY = H / 2 - h * 0.38;
+    const teamCol = s.team === 'red' ? '#ef4444' : isBlue ? '#3b82f6' : '#22c55e';
+    const step = Math.sin(animT + s.x * 2) * (h * 0.06);
+
+    // Bóng đổ mặt đất
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(sx, topY + h * 0.98, w * 0.75, h * 0.07, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Chiến mã 3D (nếu là Đại tướng cưỡi ngựa)
+    if (s.mounted) {
+      const hy = topY + h * 0.54;
+      ctx.fillStyle = '#3e1d0d';
+      ctx.fillRect(sx - w * 0.58, hy + h * 0.22 - step, w * 0.16, h * 0.22);
+      ctx.fillRect(sx + w * 0.42, hy + h * 0.22 + step, w * 0.16, h * 0.22);
+      ctx.fillStyle = '#6b3419'; ctx.fillRect(sx - w * 0.72, hy, w * 1.44, h * 0.25);
+      ctx.fillStyle = '#854221'; ctx.fillRect(sx - w * 0.72, hy, w * 1.44, h * 0.08);
+      ctx.fillStyle = '#5c2d16'; ctx.fillRect(sx + w * 0.48, hy - h * 0.18, w * 0.28, h * 0.24);
+      ctx.fillStyle = '#1c1917'; ctx.fillRect(sx + w * 0.42, hy - h * 0.18, w * 0.1, h * 0.22);
+      ctx.fillStyle = '#4a2311';
+      ctx.fillRect(sx - w * 0.48, hy + h * 0.24 + step, w * 0.17, h * 0.22);
+      ctx.fillRect(sx + w * 0.32, hy + h * 0.24 - step, w * 0.17, h * 0.22);
+    }
+
+    const bodyY = s.mounted ? topY + h * 0.22 : topY + h * 0.3;
+    const bodyH = s.mounted ? h * 0.36 : h * 0.64;
+
+    // Chân người
+    if (!s.mounted) {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(sx - w * 0.36, bodyY + bodyH * 0.55 + step, w * 0.28, bodyH * 0.45);
+      ctx.fillRect(sx + w * 0.08, bodyY + bodyH * 0.55 - step, w * 0.28, bodyH * 0.45);
+    }
+
+    // Trang phục: Vest đen cho Tướng / Áo đồng phục sơ mi trắng cho Lính
+    if (isGen) {
+      ctx.fillStyle = '#111827'; ctx.fillRect(sx - w * 0.48, bodyY, w * 0.96, bodyH * 0.65);
+      ctx.fillStyle = '#1f2937'; ctx.fillRect(sx - w * 0.48, bodyY, w * 0.2, bodyH * 0.65);
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.moveTo(sx - w * 0.16, bodyY); ctx.lineTo(sx + w * 0.16, bodyY); ctx.lineTo(sx, bodyY + bodyH * 0.35); ctx.fill();
+      ctx.fillStyle = teamCol; ctx.fillRect(sx - w * 0.05, bodyY + 2, w * 0.1, bodyH * 0.36);
+    } else {
+      ctx.fillStyle = '#f8fafc'; ctx.fillRect(sx - w * 0.45, bodyY, w * 0.9, bodyH * 0.56);
+      ctx.fillStyle = '#e2e8f0'; ctx.fillRect(sx - w * 0.45, bodyY, w * 0.18, bodyH * 0.56);
+      ctx.fillStyle = teamCol;
+      ctx.fillRect(sx - w * 0.06, bodyY, w * 0.12, bodyH * 0.46);
+      ctx.fillRect(sx - w * 0.45, bodyY + bodyH * 0.16, w * 0.16, bodyH * 0.12);
+    }
+
+    // Tay & Vũ khí
+    ctx.fillStyle = isGen ? '#111827' : '#f8fafc';
+    ctx.fillRect(sx - w * 0.62, bodyY + 2 - step * 0.5, w * 0.16, bodyH * 0.45);
+    ctx.fillRect(sx + w * 0.46, bodyY + 2 + step * 0.5, w * 0.16, bodyH * 0.45);
+
+    if (s.type === 'archer') {
+      ctx.strokeStyle = '#92400e'; ctx.lineWidth = Math.max(2, scale * 0.025);
+      ctx.beginPath(); ctx.arc(sx + w * 0.52, bodyY + bodyH * 0.28, bodyH * 0.42, -1.3, 1.3); ctx.stroke();
+    } else {
+      ctx.fillStyle = isGen ? '#facc15' : '#cbd5e1';
+      ctx.fillRect(sx + w * 0.5, bodyY - bodyH * 0.25 + step, Math.max(2, w * 0.08), bodyH * 0.55);
+    }
+
+    // Ghép trực tiếp ảnh khuôn mặt thật lên cổ áo
+    const headR = w * 0.46;
+    const headY = bodyY - headR * 0.85;
+    const img = isBlue ? faces[s.type] : null;
+
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(sx, headY, headR * 0.92, headR * 1.12, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, sx - headR * 1.15, headY - headR * 1.25, headR * 2.3, headR * 2.5);
+      ctx.restore();
+      // Viền bóng nhẹ giúp khuôn mặt nổi khối 3D
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(sx, headY, headR * 0.92, headR * 1.12, 0, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#f5cba7'; ctx.beginPath(); ctx.arc(sx, headY, headR * 0.85, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#18181b'; ctx.beginPath(); ctx.arc(sx, headY - headR * 0.15, headR * 0.88, Math.PI, 0); ctx.fill();
+    }
+
+    if (isGen) {
+      ctx.fillStyle = '#facc15'; ctx.fillRect(sx - headR * 0.75, headY - headR * 1.35, headR * 1.5, headR * 0.28);
+    }
+
+    // Thanh máu
+    ctx.fillStyle = '#000'; ctx.fillRect(sx - w / 2, headY - headR * 1.65, w, 5);
+    ctx.fillStyle = teamCol; ctx.fillRect(sx - w / 2, headY - headR * 1.65, w * (s.hp / s.maxHp), 5);
+  }
+
+  // Sắp xếp chiều sâu & Vẽ toàn bộ nhân vật, đạn, hiệu ứng
+  const allSprites = [
+    ...entities.map(e => ({ kind: 'unit', ...e })),
+    ...projectiles.map(p => ({ kind: 'proj', ...p })),
+    ...particles.map(pt => ({ kind: 'part', ...pt })),
+    ...floatTexts.map(ft => ({ kind: 'text', ...ft }))
+  ].map(s => {
+    const dx = s.x - player.x, dy = s.y - player.y;
+    return { ...s, dist: Math.hypot(dx, dy), ang: Math.atan2(dy, dx) - player.dir };
+  }).sort((a, b) => b.dist - a.dist);
+
+  allSprites.forEach(s => {
+    const diff = Math.atan2(Math.sin(s.ang), Math.cos(s.ang));
+    if (Math.abs(diff) < FOV * 0.7 && s.dist > 0.35) {
+      const sx = (0.5 + diff / FOV) * W, ix = Math.floor(sx);
+      if (ix < 0 || ix >= W || s.dist >= zBuf[ix]) return;
+      const scale = H / s.dist;
+
+      if (s.kind === 'unit') drawRealFaceCharacter(s, sx, scale);
+      else if (s.kind === 'proj') {
+        ctx.fillStyle = s.type === 'wave' ? (s.team === 'red' ? '#facc15' : s.team === 'blue' ? '#38bdf8' : '#4ade80') : s.type === 'tower' ? '#f43f5e' : '#fff';
+        ctx.beginPath(); ctx.arc(sx, H / 2, scale * (s.type === 'wave' ? 0.24 : 0.08), 0, Math.PI * 2); ctx.fill();
+      } else if (s.kind === 'part') {
+        ctx.fillStyle = s.color; ctx.fillRect(sx, H / 2, scale * 0.05, scale * 0.05);
+      } else if (s.kind === 'text') {
+        ctx.fillStyle = s.color; ctx.font = 'bold 17px sans-serif'; ctx.fillText(s.text, sx - 20, H / 2 - scale * 0.45);
+      }
+    }
+  });
+
+  if (player.healGlow > 0) { ctx.fillStyle = `rgba(74,222,128,${player.healGlow * 0.35})`; ctx.fillRect(0, 0, W, H); }
+  ctx.save();
+  ctx.translate(W * 0.73, H * 0.86); ctx.rotate(-0.35 - player.swing * 1.15);
+  ctx.shadowColor = '#f97316'; ctx.shadowBlur = 18;
+  ctx.fillStyle = '#f8fafc'; ctx.fillRect(-10, -250, 20, 230);
+  ctx.fillStyle = '#f59e0b'; ctx.fillRect(-38, -30, 76, 15);
+  ctx.fillStyle = '#111827'; ctx.fillRect(-10, -15, 20, 65);
+  ctx.restore();
+
+  mCtx.clearRect(0, 0, 192, 160);
+  for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+    mCtx.fillStyle = MAP[y][x] === 2 ? '#ef4444' : MAP[y][x] === 3 ? '#3b82f6' : MAP[y][x] === 4 ? '#22c55e' : MAP[y][x] === 5 ? '#b45309' : MAP[y][x] === 1 ? '#15803d' : '#1e293b';
+    mCtx.fillRect(x * 8, y * 8, 8, 8);
+  }
+  entities.forEach(e => {
+    mCtx.fillStyle = e.team === 'red' ? '#f87171' : e.team === 'blue' ? '#60a5fa' : '#4ade80';
+    mCtx.beginPath(); mCtx.arc(e.x * 8, e.y * 8, e.type === 'general' ? 4 : 2.2, 0, Math.PI * 2); mCtx.fill();
+  });
+  mCtx.fillStyle = '#facc15'; mCtx.beginPath(); mCtx.arc(player.x * 8, player.y * 8, 4.2, 0, Math.PI * 2); mCtx.fill();
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
